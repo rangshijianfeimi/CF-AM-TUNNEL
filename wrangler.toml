@@ -2,6 +2,9 @@ name = "am-tunnel"
 main = "_worker.js"
 compatibility_date = "2026-09-19"
 
+# 保存dashboard中的变量
+keep_vars = true
+
 [[kv_namespaces]]
 binding = "ips"
 id = "05e102cef6d64cdbac6f33223bf57b0f"
