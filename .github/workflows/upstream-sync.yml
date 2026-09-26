@@ -1,0 +1,126 @@
+name: Upstream Sync
+
+on:
+  schedule:
+    # 每 6 小时执行一次
+    - cron: "0 */6 * * *"
+
+  # 允许在 GitHub Actions 页面手动执行
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-upstream:
+    name: Sync amclubs/am-cf-tunnel-sub
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 拉取自己的仓库
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      # 2. 配置 Git
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # 3. 添加上游仓库并获取最新代码
+      - name: Fetch upstream
+        run: |
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream https://github.com/amclubs/am-cf-tunnel-sub.git
+          git fetch upstream main
+
+      # 4. 保存自己的配置文件
+      #
+      # 这些文件不能被上游覆盖：
+      # - wrangler.toml
+      # - .github/workflows/upstream-sync.yml
+      # - .github/workflows/cloudflare-deploy.yml
+      #
+      - name: Backup local configuration
+        run: |
+          mkdir -p /tmp/local-config
+
+          if [ -f wrangler.toml ]; then
+            cp wrangler.toml /tmp/local-config/wrangler.toml
+          fi
+
+          if [ -f .github/workflows/upstream-sync.yml ]; then
+            cp .github/workflows/upstream-sync.yml /tmp/local-config/upstream-sync.yml
+          fi
+
+          if [ -f .github/workflows/cloudflare-deploy.yml ]; then
+            cp .github/workflows/cloudflare-deploy.yml /tmp/local-config/cloudflare-deploy.yml
+          fi
+
+      # 5. 删除旧代码，但保留 GitHub Actions 和自己的 wrangler.toml
+      - name: Clean old upstream files
+        run: |
+          git ls-files \
+            | grep -v '^\.github/workflows/upstream-sync\.yml$' \
+            | grep -v '^\.github/workflows/cloudflare-deploy\.yml$' \
+            | grep -v '^wrangler\.toml$' \
+            | xargs -r git rm -f
+
+      # 6. 把上游 main 的最新代码解压到当前仓库
+      #
+      # 不同步：
+      # - wrangler.toml
+      # - .github/
+      #
+      # 防止上游覆盖自己的 Cloudflare 配置和 Actions。
+      - name: Copy upstream files
+        run: |
+          git archive upstream/main \
+            --format=tar \
+            --exclude=wrangler.toml \
+            --exclude=.github \
+            | tar -xf -
+
+      # 7. 恢复自己的配置
+      - name: Restore local configuration
+        run: |
+          if [ -f /tmp/local-config/wrangler.toml ]; then
+            cp /tmp/local-config/wrangler.toml wrangler.toml
+          fi
+
+          mkdir -p .github/workflows
+
+          if [ -f /tmp/local-config/upstream-sync.yml ]; then
+            cp /tmp/local-config/upstream-sync.yml \
+              .github/workflows/upstream-sync.yml
+          fi
+
+          if [ -f /tmp/local-config/cloudflare-deploy.yml ]; then
+            cp /tmp/local-config/cloudflare-deploy.yml \
+              .github/workflows/cloudflare-deploy.yml
+          fi
+
+      # 8. 检查文件
+      - name: Show changes
+        run: |
+          git status --short
+
+      # 9. 判断是否有更新
+      - name: Commit changes
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "No upstream changes detected."
+            exit 0
+          fi
+
+          git add -A
+
+          git commit -m "chore: sync upstream amclubs/am-cf-tunnel-sub"
+
+      # 10. 推送到自己的 main
+      - name: Push changes
+        run: |
+          git push origin HEAD:main
